@@ -16,6 +16,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -24,11 +27,34 @@ func buildCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "build",
 		Short: "Run the passed sequence of commands",
-		Long: `Execute the passed sequence of commands. This command assumes
-that it is being run in the context of a Github Actions workflow.`,
+		Long: `Execute the passed sequence of commands. Separate commands with
+a semi-colon (;). This command assumes that it is being run in the context of a
+Github Actions workflow.`,
+		Args: cobra.MinimumNArgs(1),
+
+		// TODO: disabling flag parsing is unexpected, but simplifies the CLI
+		// for if users are not familiar with UNIX convention of using `--` to
+		// separate flags from arguments.
+		// DisableFlagParsing: true,
 
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println(args)
+			for _, arg := range args {
+				// User may supply numerous commands, separated by a ';', which
+				// should be run separately.
+				for _, cmdln := range strings.Split(arg, ";") {
+					cmdln := strings.Trim(cmdln, " ")
+					cmdlst := strings.Split(strings.Trim(cmdln, " "), " ")
+
+					cmd := exec.Command(cmdlst[0], cmdlst[1:]...)
+					cmd.Env = os.Environ()
+					// TODO: for long-running build processes users will
+					// appreciate buffering output, rather than dumping it all
+					// at once when the command execution has completed.
+					out, err := cmd.Output()
+					fmt.Println(string(out))
+					check(err)
+				}
+			}
 		},
 	}
 	return c
