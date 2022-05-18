@@ -1,0 +1,97 @@
+name: SLSA builder
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      build-commands:
+        description: "The commands to be run in order to build the project. (Will be run in an isolated VM)"
+        required: true
+        type: string
+
+jobs:
+  # Copy/paste because "Reusable workflows can't call other reusable workflows."
+  # https://docs.github.com/en/actions/using-workflows/reusing-workflows#limitations
+  detect-env:
+    uses: ./.github/workflows/_detect_env.yml
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Needed to detect the current reusable repository and ref.
+      contents: read
+    outputs:
+      repository: ${{ steps.detect.outputs.repository }}
+      ref: ${{ steps.detect.outputs.ref }}
+    steps:
+      - name: Detect the repository and ref
+        id: detect
+        shell: bash
+        run: |
+          status_code=$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=slsa-framework/slsa-github-generator" -o jwt.json -w '%{http_code}')
+          if [[ $status_code -lt 200 ]] || [[ $status_code -ge 300 ]]; then
+              error_msg=$(jq -r .message jwt.json 2>/dev/null || echo 'unknown error')
+              echo "Failed to get OIDC token from GitHub, response $status_code: $error_msg"
+              exit 1;
+          fi
+          export WORKFLOW_REF=$(cat jwt.json | jq -r '.value' | cut -d "." -f2 | base64 -d | jq -r '.job_workflow_ref')
+          if [ -z $WORKFLOW_REF ]; then
+            echo "OIDC token parsing failure: job_workflow_ref could not be retrieved"
+            exit 1;
+          fi
+          echo "::set-output name=repository::$(echo $WORKFLOW_REF | cut -d "@" -f1 | cut -d '/' -f1-2)"
+          echo "::set-output name=ref::$(echo $WORKFLOW_REF | cut -d "@" -f2)"
+
+  ###################################################################
+  #                                                                 #
+  #                       Build the generator                       #
+  #                                                                 #
+  ###################################################################
+  generator:
+    outputs:
+      signed-provenance-name: ${{ steps.sign-prov.outputs.signed-provenance-name }}
+    runs-on: ubuntu-latest
+    needs: [detect-env]
+    permissions:
+      id-token: write # Needed for keyless.
+      contents: read
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2.3.4
+        with:
+          fetch-depth: 0
+          repository: "${{ needs.detect-env.outputs.repository }}"
+          ref: "${{ needs.detect-env.outputs.ref }}"
+      - name: Set up golang environment
+        uses: actions/setup-go@424fc82d43fa5a37540bae62709ddcc23d9520d4 # v2.1.3
+        with:
+          go-version: 1.18
+
+      - name: Download dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          #TODO(reproducible)
+          go mod vendor
+
+      # TODO(hermeticity) OS-level.
+
+      - name: Build slsa-github-generator
+        shell: bash
+        id: generator-gen
+        run: |
+          set -euo pipefail
+
+          # https://go.dev/ref/mod#build-commands.
+          go build -mod=vendor -o slsa-github-generator github.com/slsa-framework/slsa-github-generator/cmd/slsa-github-generator
+          chmod a+x slsa-github-generator
+
+      - name: Build artifacts
+        id: build-artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "running build commands ${{ inputs.build-commands }}"
+          ./slsa-github-generator build ${{ inputs.build-commands }}
+
+    # TODO: generate & sign provenance
+    # TODO: upload artefacts (built output and provenance metadata)
