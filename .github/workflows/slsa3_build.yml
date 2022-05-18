@@ -14,7 +14,6 @@ jobs:
   # Copy/paste because "Reusable workflows can't call other reusable workflows."
   # https://docs.github.com/en/actions/using-workflows/reusing-workflows#limitations
   detect-env:
-    uses: ./.github/workflows/_detect_env.yml
     runs-on: ubuntu-latest
     permissions:
       id-token: write # Needed to detect the current reusable repository and ref.
