@@ -22,7 +22,7 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 #v2.4.0
-      - uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741
+      - uses: actions/download-artifact@9782bd6a9848b53b110e712e20e42d89988822b7
         with:
           name: ${{ needs.build.outputs.attestation-name }}
       - env:
